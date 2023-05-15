@@ -1,0 +1,573 @@
+---
+title: "Analysis of Congress and Healthcare"
+author: "Joe Garcia"
+date: "2023-05-14"
+output:
+  html_document:
+    includes:
+      in_header: header.html
+    css: ./lab.css
+    highlight: pygments
+    theme: cerulean
+    toc: true
+    toc_float: true
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+Who writes the laws in the United States? Well, they are written by the Congress people that represent every single one of us in the U.S. In DATA 606, I conducted an analysis to determine whether the age of Congress was increasing over time, and found that there was a significant difference between the age groups from 1923-2005 and 2005-2023, indicating an overall aging trend. Now, we aim to investigate whether healthcare policies are impacted by the age of Congress. To accomplish this, we gathered data spanning from 1973 to 2022, and analyzed whether the number of healthcare laws being implemented has increased or decreased over time.
+
+```{r setup, include=FALSE}
+
+library(readr)
+library(tidyverse)
+library(psych)
+library(ggplot2)
+library(openintro)
+library(gridExtra)
+library(ggmap)
+
+```
+# Research Question
+
+Is the age of congress increasing as time goes by?
+
+Does healthcare in laws increase as congress age increases?
+
+# Data
+
+Here we download the data from fivethrityeight.com about the ages of members of Congress over the years.
+
+```{r}
+url <- "https://raw.githubusercontent.com/fivethirtyeight/data/master/congress-demographics/data_aging_congress.csv"
+
+data <-read_csv(url)
+
+house_data <- subset(data, chamber == "House") 
+senate_data <- subset(data, chamber == "Senate")
+
+
+```
+
+
+
+# Web Data
+
+Here we download the data from the US government about the Healthcare related bills that were either proposed ("Introduced") and ones that were made into law ("Became Law").  I filtered the search of bills for the keyword "health care" and scraped the search results manually.
+
+From congress.gov.
+
+```{r}
+
+url <- "https://raw.githubusercontent.com/Foxxenn/Analysis_of_Congress_Healthcare/main/Final_Data/ACA_Congress_Votes_states.csv"
+congress_votes <- read_csv(url)
+
+
+# votes <- read_csv("Final_Data/votes.csv")
+
+
+```
+
+# Transformations and Cleaning
+
+The FiveThirtyEight data is clean, however, we need to extract a few rows from the dataset to explore it on our own. We have to transform the data for the House, Senate, and both chambers combined, including only the years and the congressional dates.
+
+```{r}
+house_mean_age_list <- list()
+h_congress <- sort(unique(house_data$congress))
+
+senate_mean_age_list <- list()
+s_congress <- sort(unique(senate_data$congress))
+
+for(i in h_congress ){
+  house_year <- house_data %>% filter(congress==i) 
+  house_i <- mean(house_year$age_years)  
+  house_mean_age_list <- c(house_mean_age_list, house_i)
+}
+
+
+for(i in s_congress ){
+  senate_year <- senate_data %>% filter(congress==i) 
+  senate_i <- mean(senate_year$age_years)
+  senate_mean_age_list <- c(senate_mean_age_list, senate_i)
+}
+
+# Make a new dataframe of the house and senate, as well as congress
+house_ages <- unlist(house_mean_age_list)
+years1 <- seq(from = 1919, to = 2023, by = 2)
+house_df <- data.frame( year = years1, age = house_ages)
+
+senate_ages <- unlist(senate_mean_age_list)
+years2 <- seq(from = 1919, to = 2023, by = 2)
+senate_df <- data.frame( year = years2, age = senate_ages)
+
+congress_df <- data.frame(year = years1, house_ages, senate_ages)
+
+# Here we have gone back and made sure to only include the 1973- 2022 years in our dataset
+congress_df_73_22 <- congress_df %>% 
+  filter(year >= 1973 & year <= 2022)
+
+
+```
+
+While the Affordable Care Act (ACA) vote dataset was small, it proved to be quite cumbersome. I had to manually remove the text from the web-scraped data and organize it into a clean and tidy dataframe.
+
+```{r}
+
+votes_df <- data.frame()
+
+# loop through the rows and extract the required information
+for (i in 1:nrow(congress_votes)) {
+  
+  row_text <- congress_votes[i, 1]  # get the text from the ith row
+  
+  # check if the row contains a state name
+  if (nchar(gsub("[^[:alpha:]]", "", row_text)) > 0) {
+    state <- str_extract(row_text, "\\b[A-Z]{2}\\b") # set the state name
+  }
+  
+  # check if the row contains a congressman name and vote
+  if (nchar(gsub("[^[:alnum:]-]", "", row_text)) > 0) {
+    name <- gsub(" \\(.*", "", row_text)  # get the congressman name
+    vote <- ifelse(grepl("Yea", row_text), "Yea", "Nay")  # get the vote
+    party <- ifelse(grepl("\\(R-", row_text), "Republican", "Democrat")  # get the party
+    
+    # add the information to the data frame
+    votes_df <- rbind(votes_df, data.frame(State = state, Name = name, Vote = vote, Party = party))
+  }
+}
+
+knitr::kable(head(votes_df, n = 5), format = "html", caption = "Votes")
+
+```
+
+
+Here is the final step to make it clean, remove the State row between each senator. 
+
+```{r}
+
+rows_to_remove <- seq(1, nrow(votes_df), by = 3)
+
+final_votes_df <- votes_df[-rows_to_remove, ]
+
+knitr::kable(head(final_votes_df, n = 5), format = "html", caption = "Final Votes")
+
+```
+
+```{r}
+# write.csv(final_votes_df, file = "votes.csv", row.names = FALSE)
+```
+
+# Transforming Data
+
+This took a while to figure out, had to transform the strings into numeric in order to have the year the laws passed as numbers.
+
+```{r}
+
+url1 <- "https://raw.githubusercontent.com/Foxxenn/Analysis_of_Congress_Healthcare/main/Final_Data/Laws_congress_from_93_117.csv"
+
+data1 <- read.csv(url1)
+
+laws_passed <- data.frame(
+  congress = as.numeric(gsub("\\s*\\(.*\\).*", "", data1$Congress.Passed.into.Laws)),
+  start_year = as.numeric(gsub(".*\\(([0-9]{4})-.*", "\\1", data1$Congress.Passed.into.Laws)),
+  end_year = as.numeric(gsub(".*-([0-9]{4})\\).*", "\\1", data1$Congress.Passed.into.Laws)),
+  laws_passed = as.numeric(gsub(".*\\[(.*)\\].*", "\\1", data1$Congress.Passed.into.Laws))
+)
+
+```
+
+```{r}
+
+url2 <-"https://raw.githubusercontent.com/Foxxenn/Analysis_of_Congress_Healthcare/main/Final_Data/Proposed_congress_from_93_117.csv"
+
+data2 <- read.csv(url2)
+
+proposed_passed <- data.frame(
+  congress = as.numeric(gsub("\\s*\\(.*\\).*", "", data2$Congress.Proposed.into.Laws)),
+  start_year = as.numeric(gsub(".*\\(([0-9]{4})-.*", "\\1", data2$Congress.Proposed.into.Laws)),
+  end_year = as.numeric(gsub(".*-([0-9]{4})\\).*", "\\1", data2$Congress.Proposed.into.Laws)),
+  proposed_laws = as.numeric(gsub(",", "", gsub(".*\\[(.*)\\].*", "\\1", data2$Congress.Proposed.into.Laws)))
+)
+
+```
+
+```{r}
+
+merged_laws_df <- merge(laws_passed, proposed_passed, by = "congress")
+
+merged_laws_df <- merged_laws_df %>%
+  select(congress, start_year.x, end_year.x, laws_passed, proposed_laws)
+
+merged_laws_df$percentage <- round((merged_laws_df$laws_passed / merged_laws_df$proposed_laws )* 100,2)
+
+
+
+
+```
+
+# Data Visualization
+
+Here we managed to grab the data and place inside a ggplot. Then we were able to add decorations to make our visualizations pop.
+
+We have the proposed laws that have passed, marked as on plot, and a regression line in the later plot.
+
+```{r}
+
+ggplot(proposed_passed, aes(x = start_year, y = proposed_laws)) +
+  geom_line(aes(y = proposed_laws, color = "Laws Proposed")) +
+  geom_point(aes(y = proposed_laws), color = "black") +
+  geom_point() +
+  geom_text(aes(label = congress), vjust = -1, size = 2, angle = -2, hjust = 1) +
+  theme(axis.text.x = element_text(angle = -2, hjust = 1)) +
+  # title("Laws Proposed") +
+  xlab("Year") +
+  ylab("Number of Laws \nProposed") +
+  labs(x = "Year", y = "Number of Laws \nProposed", title = "Laws Proposed") + theme_bw() +
+  geom_line() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Legend", values = c("Laws Proposed" = 'black')) +
+  scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+
+
+
+```
+
+
+```{r}
+
+ggplot(data = proposed_passed, aes(x = start_year, y = proposed_laws)) + 
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE)+
+  geom_line(aes(y = proposed_laws, color = "Laws Proposed")) +
+  geom_point(aes(y = proposed_laws), color = "black") +
+  geom_text(aes(label = congress), vjust = -1, size = 2, angle = -2, hjust = 1) +
+  theme(axis.text.x = element_text(angle = -2, hjust = 1)) +
+  # title("Laws Proposed") +
+  xlab("Year") +
+  ylab("Number of Laws \nProposed") +
+  labs(x = "Year", y = "Number of Laws \nProposed", title = "Laws Proposed") + theme_bw() +
+  geom_line() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Legend", values = c("Laws Proposed" = 'black')) +
+  scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+```
+
+We have the passed laws that have passed, marked as on plot, and a regression line in the later plot.
+
+```{r}
+
+ggplot(laws_passed, aes(x = start_year, y = laws_passed)) +
+  geom_line(aes(y = laws_passed, color = "Laws Passed")) +
+  geom_point(aes(y = laws_passed), color = "black") +
+  geom_point() +
+  geom_text(aes(label = congress), vjust = -1, size = 2, angle = -2, hjust = 1) +
+  theme(axis.text.x = element_text(angle = -2, hjust = 1)) +
+  # title("Laws Proposed") +
+  xlab("Year") +
+  ylab("Number of Laws \nPassed") +
+  labs(x = "Year", y = "Number of Laws \nPassed", title = "Laws Passed") + theme_bw() +
+  geom_line() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Legend", values = c("Laws Passed" = 'black')) +
+  scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+```
+
+
+
+```{r}
+ggplot(laws_passed, aes(x = start_year, y = laws_passed)) +
+  geom_line(aes(y = laws_passed, color = "Laws Passed")) +
+  stat_smooth(method = "lm", se = FALSE)+
+  geom_point(aes(y = laws_passed), color = "black") +
+  geom_point() +
+  geom_text(aes(label = congress), vjust = -1, size = 2, angle = -2, hjust = 1) +
+  theme(axis.text.x = element_text(angle = -2, hjust = 1)) +
+  # title("Laws Proposed") +
+  xlab("Year") +
+  ylab("Number of Laws \nPassed") +
+  labs(x = "Year", y = "Number of Laws \nPassed", title = "Laws Passed") + theme_bw() +
+  geom_line() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Legend", values = c("Laws Passed" = 'black')) +
+  scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+
+
+```
+
+
+We have the percentage of laws that have passed, which is "passed" divided by "proposed", marked as on plot, and a regression line in the later plot.
+
+```{r}
+
+
+ggplot(merged_laws_df, aes(x = start_year.x, y = percentage)) +
+  geom_line(aes(y = percentage, color = "Percentage")) +
+  geom_point(aes(y = percentage), color = "black") +
+  geom_point() +
+  geom_text(aes(label = congress), vjust = -1, size = 2, angle = -2, hjust = 1) +
+  theme(axis.text.x = element_text(angle = -2, hjust = 1)) +
+  # title("Laws Proposed") +
+  xlab("Year") +
+  ylab("Percentage of of Laws \nPassed") +
+  labs(x = "Year", y = "Precentage of Laws \nPassed", title = "Percentage Passed") + theme_bw() +
+  geom_line() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Legend", values = c("Percentage" = 'black')) +
+  scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+
+
+```
+
+Surprisingly, the percentage of laws passed in relation to the proposed laws showed a gradual decline. This is surprising because the previous graphs depicted an upward trend. It demonstrates that statistically, the data can be interpreted in both directions. This could possibly be attributed to Congress infighting and a lack of agreement as the years progress.
+
+It would be interesting to explore the possible reasons behind the gradual decline in the percentage of laws passed. Further analysis could reveal if this trend is limited to specific issues or if it is a more general trend across all areas of legislation.
+
+```{r}
+
+
+ggplot(merged_laws_df, aes(x = start_year.x, y = percentage)) +
+  geom_line(aes(y = percentage, color = "Percentage")) +
+    stat_smooth(method = "lm", se = FALSE)+
+  geom_point(aes(y = percentage), color = "black") +
+  geom_point() +
+  geom_text(aes(label = congress), vjust = -1, size = 2, angle = -2, hjust = 1) +
+  theme(axis.text.x = element_text(angle = -2, hjust = 1)) +
+  # title("Laws Proposed") +
+  xlab("Year") +
+  ylab("Percentage of of Laws \nPassed") +
+  labs(x = "Year", y = "Precentage of Laws \nPassed", title = "Percentage Passed") + theme_bw() +
+  geom_line() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Legend", values = c("Percentage" = 'black')) +
+  scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+
+
+```
+
+
+
+
+# Analysis of Data
+
+The time frame representing the age of Congress has been adjusted to more closely match the scraped data.
+
+```{r}
+
+ggplot(congress_df_73_22, aes(year)) +
+  geom_line(aes(y = senate_ages, color = "Senate")) +
+  geom_line(aes(y = house_ages, color = "House")) +
+  geom_point(aes(y = senate_ages), color = "blue") +
+  geom_point(aes(y = house_ages), color = "red") +
+  labs(x = "Year of Congress", y = "Age of Congress \nPerson", title = "Age of Congress") + theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+        axis.title = element_text( size = 15),
+        axis.text = element_text( size = 15), 
+        legend.title = element_text( size = 16), 
+        legend.text = element_text(size = 16), 
+        plot.margin = unit(c(1, 1, 2, 1), "lines")) +
+  scale_color_manual(name = "Age", values = c("Senate" = "blue", "House" = "red")) +                            scale_x_continuous(breaks = c(1973, 1983, 1993, 2003, 2013, 2023))
+
+```
+
+
+
+
+## Statistical Analysis of data
+
+Now, we will proceed to analyze the data. First, we extract the age information and then normalize the years to fit them within the chart. Otherwise, we would have a skewed graph with a huge representation of the old ages and a small representation of the recent ages. Once we have normalized the data, we can observe a clear difference between the pink and green bar charts. The green bar chart, representing the more recent times, shows a slightly older age group as it is shifted to the right. This may indicate that congress is aging as time progresses, which could potentially have an impact on the laws they pass regarding healthcare.
+
+```{r}
+whole_data2 <- data %>% 
+  mutate(group = case_when(
+    congress >= 69 & congress <= 108 ~ "1925 to 2005",
+
+    congress >= 109 & congress <= 118 ~ "2005 to 2023",
+    TRUE ~ NA_character_
+  ))
+
+whole_data2 <- whole_data2 %>% 
+  drop_na(group)
+
+
+
+ggplot(whole_data2, aes(x = age_years, fill = group)) +
+  geom_histogram(aes(y = ..density..), position = "identity", alpha = 0.3, bins = 50) +
+  scale_fill_discrete(name = "Group") +
+  labs(x = "Age (years)", y = "Probability Density", title = "Senate and House Normalized Histogram of Age") +
+  theme(plot.title = element_text(hjust = 0.2, face = "bold",size = 18),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 15),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 16))
+
+```
+
+The Welch Two Sample t-test indicates that there is a statistically significant difference between the two age groups: 1925-2005 and 2005-2023. The p-value is < 2.2e-16, and the 95% confidence interval is -5.451660 to -4.804526. The negative values are because the older age group was subtracted from the younger age group, indicating that the younger group's age is about 5.4 years less than the older group's age of 4.8 years. 
+
+```{r}
+group_a <- whole_data2 %>% filter(group == "1925 to 2005") %>% select(age_years)
+group_b <- whole_data2 %>% filter(group == "2005 to 2023") %>% select(age_years)
+
+
+t.test(group_a$age_years, group_b$age_years)
+
+
+```
+
+
+The linear model indicates that the percentage year is statistically significant with a P-value of 0.0154 and a negative slope of -0.07223.
+
+Similarly, the linear model for the proposed laws and the laws passed has P-values of 8.77e-06 and 0.000111 (respectively), demonstrating a clear positive trend.  Here is proposed laws:
+
+```{r}
+
+m1 <- lm(proposed_laws ~ start_year , data = proposed_passed )
+
+summary(m1)
+
+```
+
+
+Here is laws passed:
+
+```{r}
+m2 <- lm(laws_passed ~ start_year , data = laws_passed )
+
+summary(m2)
+
+
+```
+
+
+Here is percentage of laws passed:
+
+```{r}
+
+m3<- lm(percentage ~ start_year.x , data = merged_laws_df )
+
+summary(m3)
+
+```
+
+
+## Using ggmap
+
+Using ggmap was a new experience for me. I included the Google API key in the code because I was concerned that the code might not run without it. I obtained the state variables by using us_states and created a new column with the state abbreviations. Then, I merged this data set with the final vote data set that we cleaned earlier. I had to make a note for myself to remember to ORDER everything to avoid any polygon mishaps.
+
+
+
+```{r}
+us_states <- map_data("state")
+
+register_google(key= 'AIzaSyD4vhg7Eiwr8Lv6tGobqdljO1e42WPmoP8')
+
+state_abbreviations <- setNames(state.abb, tolower(state.name))
+
+us_states <- us_states %>%
+  mutate(State = state_abbreviations[region])
+
+#df_map <- left_join(final_votes_df , us_states, by = c(State = "state"))
+
+```
+
+```{r}
+
+# Aggregate votes by state
+final_votes_df_2 <- final_votes_df %>%
+  group_by(State) %>%
+  summarise(Yea = sum(Vote == "Yea"),
+            Nay = sum(Vote == "Nay"))
+
+# Assign colors based on vote totals
+final_votes_df_2$Color <- ifelse(final_votes_df_2$Yea == 2, "#00408080", # Blue
+                            ifelse(final_votes_df_2$Nay == 2, "#80000080", # Red
+                                   "#80008080")) # Purple
+
+```
+
+
+```{r}
+
+merged_df <- merge(final_votes_df_2, us_states, by = "State")
+
+# sort by the "order" column to make it look prettier
+merged_df <- merged_df[order(merged_df$order), ]
+
+map <- get_map(location = "USA", zoom = 4, maptype = "terrain", source = "google", api_key = 'AIzaSyD4vhg7Eiwr8Lv6tGobqdljO1e42WPmoP8')
+
+
+ggplot(merged_df, aes(x = long, y = lat, group = State, fill = Color)) +
+  geom_polygon(color = "black", size = 0.2, alpha = 0.8) +
+  scale_fill_identity() +
+  theme_void() +
+  guides(fill = FALSE)
+
+
+```
+# Hypothesis Answer
+
+The age of congress in 2005-2023 (recent group) is shown to be positively significantly different from the past 1923-2005.
+
+We have found that through a linear model, that there is a increase in the number of laws being passed, however there is a decrease in the percentage of laws passed from the past.
+
+
+# Challenge and Limitions to the code
+
+The original web scraping plan had to be downsized to a realistic level. Originally I planned to gather the bills under the healthcare search, find out how  congress people voted, and create a ggplot of how it trended over time.
+
+Limitation of data quality: I could not screen through individual healthcare bills, so some bills are strongly related to healthcare and others only mention it peripherally.  If I were able to screen more, I would have chosen to only count the healthcare bills that are strongly related to healthcare.
+
+ggmap is a little polygonal visually
+
+
+# Conclusion
+
+Understanding how Congress works can help everyone understand the process of getting laws made. As we saw in the data, a lot of laws are proposed every year, but only a small fraction make it through to become laws. We also saw that Congress is aging, for better or worse, and this trend is continuing. Finally, we looked at how the ACA bill was voted on by the entire US, and how every individual is represented in this process. Thank you very much for staying with me!
+
+# Citations
+
+I used google for ggmap
+
+Fivethirtyeight for the congress information: https://raw.githubusercontent.com/fivethirtyeight/data/master/congress-demographics/data_aging_congress.csv
+
+I used info from congress.gov
+
+
+
